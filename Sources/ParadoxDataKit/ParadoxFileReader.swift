@@ -20,6 +20,11 @@ public enum ParadoxFileDetails {
     case paradoxTable(ParadoxTable)
     case paradoxQuery(ParadoxQuery)
     case paradoxTableView(ParadoxTableView)
+    case paradoxFamily(ParadoxFamilyFile)
+    case paradoxIndex(ParadoxIndex)
+    case paradoxSecondaryIndexData(ParadoxSecondaryIndexData)
+    case calsRaster(CalsRasterDocument)
+    case spicerSmf(SpicerSMFDocument)
     case binary(GenericBinaryFile)
 }
 
@@ -67,7 +72,19 @@ public enum ParadoxFileReader {
             return .paradoxQuery(ParadoxQuery(data: data))
         case .paradoxForm:
             return .paradoxTableView(try ParadoxTableView(data: data))
-        case .paradoxReport, .paradoxFamily, .paradoxScript, .spreadsheet, .snapshot, .unknown:
+        case .paradoxFamily:
+            return .paradoxFamily(ParadoxFamilyFile(data: data))
+        case .paradoxIndexPrimary:
+            return .paradoxIndex(try ParadoxIndex(data: data, kind: .primary))
+        case .paradoxIndexSecondary:
+            return .paradoxIndex(try ParadoxIndex(data: data, kind: .secondary))
+        case .paradoxSecondaryIndexData:
+            return .paradoxSecondaryIndexData(try ParadoxSecondaryIndexData(data: data))
+        case .calsRaster:
+            return .calsRaster(try CalsRasterDocument(data: data))
+        case .spicerSmf:
+            return .spicerSmf(try SpicerSMFDocument(data: data))
+        case .paradoxReport, .paradoxScript, .spreadsheet, .snapshot, .unknown:
             return .binary(GenericBinaryFile(data: data))
         }
     }

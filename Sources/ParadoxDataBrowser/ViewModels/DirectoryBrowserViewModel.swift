@@ -1,6 +1,7 @@
 #if os(macOS)
 import Foundation
 import ParadoxDataKit
+import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -41,7 +42,7 @@ final class DirectoryBrowserViewModel: ObservableObject {
         scanTask?.cancel()
         scanTask = Task(priority: .userInitiated) { [scanner] in
             do {
-                let result = try scanner.scan(directory: url)
+                let result = try await scanner.scan(directory: url)
                 await MainActor.run {
                     self.groupedFiles = result
                     self.rebuildFileMap(with: result)
@@ -84,12 +85,25 @@ final class DirectoryBrowserViewModel: ObservableObject {
     #if canImport(AppKit)
     func presentDirectoryPicker() {
         let panel = NSOpenPanel()
-        panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = "Choose"
+        panel.title = "Select Paradox Data Folder"
+        if let current = directoryURL {
+            panel.directoryURL = current
+        }
+        if #available(macOS 11.0, *) {
+            panel.allowedContentTypes = [.folder]
+        }
+
         if panel.runModal() == .OK, let url = panel.url {
-            loadDirectory(url)
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                loadDirectory(url)
+            } else {
+                errorMessage = "Please choose a folder."
+            }
         }
     }
     #endif

@@ -92,16 +92,21 @@ public struct ParadoxTableView {
 
     private static func readUInt16(from data: Data, cursor: inout Int) -> UInt16? {
         guard cursor + 2 <= data.count else { return nil }
-        let value = data[cursor..<(cursor + 2)].withUnsafeBytes { $0.load(as: UInt16.self) }
+        let low = UInt16(data[cursor])
+        let high = UInt16(data[cursor + 1]) << 8
         cursor += 2
-        return UInt16(littleEndian: value)
+        return low | high
     }
 
     private static func readUInt32(from data: Data, cursor: inout Int) -> UInt32? {
         guard cursor + 4 <= data.count else { return nil }
-        let value = data[cursor..<(cursor + 4)].withUnsafeBytes { $0.load(as: UInt32.self) }
+        var result: UInt32 = 0
+        for shift in 0..<4 {
+            let byte = UInt32(data[cursor + shift])
+            result |= byte << (UInt32(shift) * 8)
+        }
         cursor += 4
-        return UInt32(littleEndian: value)
+        return result
     }
 
     private static func readCString(in data: Data, startingAt index: Int) -> (String?, Int) {

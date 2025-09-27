@@ -46,6 +46,17 @@ struct BinaryDataReader {
         return Data(slice)
     }
 
+    static func readUInt8(from data: Data, at index: Int) -> UInt8? {
+        guard index >= 0, index + 1 <= data.count else {
+            return nil
+        }
+        return data.withUnsafeBytes { buffer -> UInt8? in
+            guard let base = buffer.baseAddress else { return nil }
+            let pointer = base.advanced(by: index).assumingMemoryBound(to: UInt8.self)
+            return pointer.pointee
+        }
+    }
+
     static func readUInt16(from data: Data, at index: Int) -> UInt16? {
         guard index >= 0, index + 2 <= data.count else {
             return nil

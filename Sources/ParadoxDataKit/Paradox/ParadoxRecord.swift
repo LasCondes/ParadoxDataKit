@@ -324,7 +324,8 @@ public struct ParadoxRecord: Equatable {
         }
         let days = Int(bigEndianSignedValue(tmp))
         guard days > 0, let base = Self.baseDate else { return nil }
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let date = calendar.date(byAdding: .day, value: days - 1, to: base)
         if let date {
             return .date(date)
@@ -352,7 +353,8 @@ public struct ParadoxRecord: Equatable {
         guard let base = Self.baseDate else { return nil }
         let integral = floor(doubleValue)
         let fractional = doubleValue - integral
-        let calendar = Calendar(identifier: .gregorian)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         guard let date = calendar.date(byAdding: .day, value: Int(integral) - 1, to: base) else { return nil }
         let seconds = fractional * 86_400.0
         let final = date.addingTimeInterval(seconds)

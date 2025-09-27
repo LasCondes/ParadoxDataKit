@@ -1,60 +1,76 @@
 import Foundation
+import ParadoxDataKit
 
 enum ParadoxBrowserCategory: CaseIterable, Identifiable {
-    case customers
-    case parts
-    case communications
-    case sales
-    case service
+    case tables
+    case queries
+    case reports
+    case forms
+    case families
+    case indexes
+    case scripts
+    case images
+    case supporting
     case other
 
     var id: String { rawValue }
-    var rawValue: String {
+
+    private var rawValue: String {
         switch self {
-        case .customers: return "customers"
-        case .parts: return "parts"
-        case .communications: return "communications"
-        case .sales: return "sales"
-        case .service: return "service"
+        case .tables: return "tables"
+        case .queries: return "queries"
+        case .reports: return "reports"
+        case .forms: return "forms"
+        case .families: return "families"
+        case .indexes: return "indexes"
+        case .scripts: return "scripts"
+        case .images: return "images"
+        case .supporting: return "supporting"
         case .other: return "other"
         }
     }
 
     var displayName: String {
         switch self {
-        case .customers: return "Customers"
-        case .parts: return "Parts"
-        case .communications: return "Communications"
-        case .sales: return "Sales & Quotes"
-        case .service: return "Service & Equipment"
+        case .tables: return "Tables (.DB)"
+        case .queries: return "Queries (.QBE)"
+        case .reports: return "Reports (.RSL)"
+        case .forms: return "Table Views (.TV)"
+        case .families: return "Family Tables (.FAM)"
+        case .indexes: return "Indexes (.PX/.Xnn/.Ynn)"
+        case .scripts: return "Scripts (.SSL/.SDL)"
+        case .images: return "Images & Graphics"
+        case .supporting: return "Supporting Files"
         case .other: return "Other"
         }
     }
 
-    private var keywords: [String] {
-        switch self {
-        case .customers:
-            return ["cust", "customer", "client", "account", "alist", "user"]
-        case .parts:
-            return ["part", "comp", "component", "item", "stock", "belt", "bolt", "inventory"]
-        case .communications:
-            return ["comm", "fax", "email", "note", "contact", "tel", "phone", "letter"]
-        case .sales:
-            return ["quote", "order", "invoice", "bill", "ship", "purchase"]
-        case .service:
-            return ["service", "repair", "equip", "serial", "install", "warranty"]
-        case .other:
-            return []
-        }
-    }
-
-    static func category(for filename: String) -> ParadoxBrowserCategory {
-        let trimmed = filename.lowercased()
-        for category in allCases where category != .other {
-            if category.keywords.contains(where: { trimmed.contains($0) }) {
-                return category
+    static func category(for format: ParadoxFileFormat, fileName: String) -> ParadoxBrowserCategory {
+        switch format {
+        case .paradoxTable:
+            return .tables
+        case .paradoxQuery:
+            return .queries
+        case .paradoxReport:
+            return .reports
+        case .paradoxForm:
+            return .forms
+        case .paradoxFamily:
+            return .families
+        case .paradoxIndexPrimary, .paradoxIndexSecondary, .paradoxSecondaryIndexData:
+            return .indexes
+        case .paradoxScript:
+            return .scripts
+        case .calsRaster, .spicerSmf:
+            return .images
+        case .spreadsheet, .snapshot:
+            return .supporting
+        case .unknown:
+            let lowered = fileName.lowercased()
+            if lowered.contains("smf") || lowered.contains("cals") {
+                return .images
             }
+            return .other
         }
-        return .other
     }
 }

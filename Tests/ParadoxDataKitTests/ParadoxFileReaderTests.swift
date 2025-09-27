@@ -29,6 +29,48 @@ final class ParadoxFileReaderTests: XCTestCase {
         XCTAssertEqual(query.text, queryText)
     }
 
+    func testCalsRasterParsesHeaderAndBuildsTiff() throws {
+        let data = makeCalsRasterSample()
+        let file = try ParadoxFileReader.load(data: data, suggestedFormat: .calsRaster)
+
+        guard case .calsRaster(let raster) = file.details else {
+            return XCTFail("Expected CALS raster details")
+        }
+
+        XCTAssertEqual(raster.widthPixels, 1_696)
+        XCTAssertEqual(raster.heightPixels, 2_195)
+        XCTAssertEqual(raster.dpi, 200)
+        XCTAssertEqual(raster.orientation, "000,270")
+        XCTAssertEqual(raster.rawImageData.count, 8)
+        XCTAssertEqual(raster.headerOffset, 0)
+
+        let tiff = raster.makeTiffData()
+        XCTAssertEqual(Array(tiff.prefix(4)), [0x49, 0x49, 0x2A, 0x00])
+        XCTAssertGreaterThanOrEqual(tiff.count, raster.rawImageData.count + 16)
+    }
+
+    func testSpicerSmfLoadsEmbeddedCalsRaster() throws {
+        let data = makeSpicerSmfSample()
+        let file = try ParadoxFileReader.load(data: data, suggestedFormat: .spicerSmf)
+
+        guard case .spicerSmf(let smf) = file.details else {
+            return XCTFail("Expected Spicer SMF details")
+        }
+
+        XCTAssertEqual(smf.containerHeader.count, 207)
+        XCTAssertEqual(smf.signature, "SMFTEST")
+
+        let raster = smf.rasterDocument
+        XCTAssertEqual(raster.headerOffset, 207)
+        XCTAssertEqual(raster.widthPixels, 1_696)
+        XCTAssertEqual(raster.heightPixels, 2_195)
+        XCTAssertEqual(raster.dpi, 200)
+        XCTAssertEqual(raster.rawImageData.count, 8)
+
+        let tiff = raster.makeTiffData()
+        XCTAssertEqual(Array(tiff.prefix(4)), [0x49, 0x49, 0x2A, 0x00])
+    }
+
     func testUnsupportedFormatsFallbackToBinary() throws {
         let bytes = Data([0x00, 0x01, 0x02, 0x03])
         let file = try ParadoxFileReader.load(data: bytes, suggestedFormat: .paradoxReport)
@@ -71,6 +113,72 @@ final class ParadoxFileReaderTests: XCTestCase {
         XCTAssertEqual(view.binary.size, data.count)
     }
 
+    func testParadoxFamilyExtractsReferencedFiles() throws {
+        let data = makeFamilySample()
+        let file = try ParadoxFileReader.load(data: data, suggestedFormat: .paradoxFamily)
+
+        guard case .paradoxFamily(let family) = file.details else {
+            return XCTFail("Expected family manifest details")
+        }
+
+        XCTAssertTrue(family.text.contains("CUSTMAST.DB"))
+        let kinds = family.referencedFiles.map(\.kind)
+        XCTAssertTrue(kinds.contains(.table))
+        XCTAssertTrue(kinds.contains(.primaryIndex))
+        XCTAssertTrue(kinds.contains(.secondaryIndex))
+        XCTAssertTrue(kinds.contains(.memo))
+        XCTAssertTrue(kinds.contains(.tableView))
+        XCTAssertTrue(kinds.contains(.query))
+        XCTAssertEqual(family.referencedFiles.first?.name.uppercased(), "CUSTMAST.DB")
+
+        let mockTable = try ParadoxTable(data: makeMockTable())
+        let swiftDataModel = SwiftDataModelRenderer.renderModel(for: mockTable, modelName: "Customer")
+        XCTAssertTrue(swiftDataModel.contains("@Model"))
+        XCTAssertTrue(swiftDataModel.contains("final class Customer"))
+        XCTAssertTrue(swiftDataModel.contains("Paradox field `CODE`"))
+    }
+
+    func testParadoxIndexParsesBasicMetadata() throws {
+        let data = makePrimaryIndexSample()
+        let file = try ParadoxFileReader.load(data: data, suggestedFormat: .paradoxIndexPrimary)
+
+        guard case .paradoxIndex(let index) = file.details else {
+            return XCTFail("Expected index details")
+        }
+
+        XCTAssertEqual(index.kind, .primary)
+        XCTAssertEqual(index.header.levelCount, 1)
+        XCTAssertEqual(index.blocks.count, 1)
+        let firstBlock = try XCTUnwrap(index.blocks.first)
+        XCTAssertEqual(firstBlock.recordCount, 1)
+        let firstRecord = try XCTUnwrap(firstBlock.records.first)
+        XCTAssertEqual(firstRecord.keyHex, "41 00")
+        XCTAssertEqual(firstRecord.childBlockNumber, 0)
+    }
+
+    func testParadoxSecondaryIndexDataParsesTable() throws {
+        let data = makeSecondaryIndexDataSample()
+        let file = try ParadoxFileReader.load(data: data, suggestedFormat: .paradoxSecondaryIndexData)
+
+        guard case .paradoxSecondaryIndexData(let indexData) = file.details else {
+            return XCTFail("Expected secondary index data details")
+        }
+
+        XCTAssertEqual(indexData.table.fields.count, 3)
+        XCTAssertEqual(indexData.table.header.keyFieldCount, 2)
+        XCTAssertEqual(indexData.secondaryFieldReferences.prefix(2), [1, 2])
+        XCTAssertEqual(indexData.sortOrder, "ascii")
+        XCTAssertEqual(indexData.indexLabel, "SecondaryIndex")
+
+        let records = indexData.table.records
+        XCTAssertEqual(records.count, 2)
+        let first = try XCTUnwrap(records.first)
+        let values = first.formattedValues()
+        XCTAssertEqual(values[0], "S001")
+        XCTAssertEqual(values[1], "PK01")
+        XCTAssertEqual(values[2], "1")
+    }
+
     func testParadoxRecordDecodesNumericAndDateFields() throws {
         let data = makeNumericTable()
         let table = try ParadoxTable(data: data)
@@ -97,7 +205,8 @@ final class ParadoxFileReaderTests: XCTestCase {
         }
 
         if case .date(let date)? = values[4].value {
-            let calendar = Calendar(identifier: .gregorian)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
             let components = calendar.dateComponents([.year, .month, .day], from: date)
             XCTAssertEqual(components.year, 2023)
             XCTAssertEqual(components.month, 4)
@@ -113,7 +222,8 @@ final class ParadoxFileReaderTests: XCTestCase {
         }
 
         if case .timestamp(let timestamp)? = values[6].value {
-            let calendar = Calendar(identifier: .gregorian)
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
             let components = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: timestamp)
             XCTAssertEqual(components.year, 2023)
             XCTAssertEqual(components.month, 4)
@@ -385,6 +495,206 @@ final class ParadoxFileReaderTests: XCTestCase {
 
     // MARK: - Helpers
 
+    private func makeFamilySample() -> Data {
+        let lines = [
+            "; Sample Paradox family manifest",
+            "TABLE \"CUSTMAST.DB\"",
+            "PRIMARYINDEX \"CUSTMAST.PX\"",
+            "SECONDARYINDEX \"CUSTMAST.X01\"",
+            "BLOBFILE \"CUSTMAST.MB\"",
+            "VALIDITY \"CUSTMAST.VAL\"",
+            "VIEW \"CUSTMAST.TV\"",
+            "QUERY \"CUSTMAST.QBE\""
+        ]
+        return lines.joined(separator: "\r\n").data(using: .windowsCP1252)!
+    }
+
+    private func makeSecondaryIndexDataSample() -> Data {
+        let fieldCount: UInt16 = 3
+        let keyFieldCount: UInt16 = 2
+        let fieldLengths: [UInt8] = [4, 4, 2]
+        let recordSize: UInt16 = UInt16(fieldLengths.reduce(0) { $0 + UInt16($1) })
+        let headerLength: UInt16 = 256
+        let fileType: UInt8 = 0x08
+        let maxTableSize: UInt8 = 0x04
+        let recordCount: UInt32 = 2
+
+        var headerArea = Data(repeating: 0, count: Int(headerLength))
+        headerArea.withUnsafeMutableBytes { buffer in
+            buffer.storeBytes(of: recordSize.littleEndian, toByteOffset: 0, as: UInt16.self)
+            buffer.storeBytes(of: headerLength.littleEndian, toByteOffset: 0x02, as: UInt16.self)
+            buffer.storeBytes(of: fileType, toByteOffset: 0x04, as: UInt8.self)
+            buffer.storeBytes(of: maxTableSize, toByteOffset: 0x05, as: UInt8.self)
+            buffer.storeBytes(of: recordCount.littleEndian, toByteOffset: 0x06, as: UInt32.self)
+            buffer.storeBytes(of: fieldCount.littleEndian, toByteOffset: 0x21, as: UInt16.self)
+            buffer.storeBytes(of: keyFieldCount.littleEndian, toByteOffset: 0x23, as: UInt16.self)
+            buffer.storeBytes(of: UInt8(0x0C), toByteOffset: 0x39, as: UInt8.self)
+        }
+
+        let descriptorOffset = 0x78
+        let fieldTypes: [UInt8] = [0x01, 0x01, 0x03]
+        for (index, length) in fieldLengths.enumerated() {
+            let base = descriptorOffset + index * 2
+            headerArea[base] = fieldTypes[index]
+            headerArea[base + 1] = length
+        }
+
+        var cursor = descriptorOffset + fieldLengths.count * 2
+
+        let pointerSectionLength = 4 + Int(fieldCount) * 4
+        headerArea.replaceSubrange(cursor..<(cursor + pointerSectionLength), with: Data(repeating: 0, count: pointerSectionLength))
+        cursor += pointerSectionLength
+
+        let fieldNumberSectionLength = Int(fieldCount) * 2
+        headerArea.replaceSubrange(cursor..<(cursor + fieldNumberSectionLength), with: Data(repeating: 0, count: fieldNumberSectionLength))
+        cursor += fieldNumberSectionLength
+
+        let tableName = Array("SECINDEX.XG0".utf8)
+        headerArea.replaceSubrange(cursor..<(cursor + tableName.count), with: tableName)
+        cursor += tableName.count
+        headerArea[cursor] = 0
+        headerArea[cursor + 1] = 0
+        cursor += 2
+
+        for name in ["SecKey", "PrimaryKey", "Hint"] {
+            var bytes = Array(name.utf8)
+            bytes.append(0)
+            headerArea.replaceSubrange(cursor..<(cursor + bytes.count), with: bytes)
+            cursor += bytes.count
+        }
+
+        let secondaryReferences: [UInt16] = [1, 2, 0]
+        var referenceData = Data()
+        for value in secondaryReferences {
+            var little = value.littleEndian
+            referenceData.append(contentsOf: withUnsafeBytes(of: &little) { Array($0) })
+        }
+        headerArea.replaceSubrange(cursor..<(cursor + referenceData.count), with: referenceData)
+        cursor += referenceData.count
+
+        let sortOrder = Array("ascii".utf8) + [0]
+        headerArea.replaceSubrange(cursor..<(cursor + sortOrder.count), with: sortOrder)
+        cursor += sortOrder.count
+
+        let label = Array("SecondaryIndex".utf8) + [0]
+        headerArea.replaceSubrange(cursor..<(cursor + label.count), with: label)
+
+        let records: [(String, String, Int16)] = [
+            ("S001", "PK01", 1),
+            ("S002", "PK02", 2)
+        ]
+
+        var recordArea = Data(repeating: 0, count: 6)
+        for record in records {
+            var row = Data()
+            let values = [record.0, record.1]
+            for (value, length) in zip(values, fieldLengths) {
+                var bytes = Array(value.utf8)
+                if bytes.count < Int(length) {
+                    bytes.append(contentsOf: repeatElement(0x20, count: Int(length) - bytes.count))
+                }
+                row.append(contentsOf: bytes.prefix(Int(length)))
+            }
+            row.append(paradoxEncodeShort(record.2))
+            recordArea.append(row)
+        }
+
+        return headerArea + recordArea
+    }
+
+    private func makePrimaryIndexSample() -> Data {
+        let headerLength = 2048
+        let blockLength = 1024
+        var data = Data(repeating: 0, count: headerLength + blockLength)
+
+        writeUInt16(8, into: &data, at: 0x0000)
+        writeUInt16(UInt16(headerLength), into: &data, at: 0x0002)
+        data[0x0004] = 0x01
+        data[0x0005] = 0x01
+        writeUInt32(1, into: &data, at: 0x0006)
+        writeUInt16(1, into: &data, at: 0x000A)
+        writeUInt16(1, into: &data, at: 0x000C)
+        writeUInt16(1, into: &data, at: 0x000E)
+        writeUInt16(1, into: &data, at: 0x0010)
+        writeUInt16(1, into: &data, at: 0x001E)
+        data[0x0020] = 0x01
+        data[0x0021] = 0x01
+
+        let blockOffset = headerLength
+        // next and previous already zeroed
+        writeUInt16(0, into: &data, at: blockOffset + 0x0004)
+
+        let recordOffset = blockOffset + 0x0006
+        data[recordOffset] = 0x41
+        data[recordOffset + 1] = 0x00
+        // remaining six bytes already zero
+
+        return data
+    }
+
+    private func makeCalsRasterSample() -> Data {
+        let lines = [
+            "srcdocid: SAMPLE",
+            "dstdocid: NONE",
+            "txtfilid: NONE",
+            "figid:    NONE",
+            "srcgph:   NONE",
+            "doccls:   NONE",
+            "rtype:    1",
+            "rorient:  000,270",
+            "rpelcnt:  001696,002195",
+            "rdensty:  0200",
+            "notes:    NONE"
+        ]
+
+        var header = Data()
+        for record in paddedCalsRecords(from: lines) {
+            header.append(contentsOf: record)
+        }
+
+        let imageBytes: [UInt8] = [0xFF, 0x00, 0xFF, 0x00, 0xAA, 0x55, 0xAA, 0x55]
+        return header + Data(imageBytes)
+    }
+
+    private func makeSpicerSmfSample() -> Data {
+        let targetOffset = 207
+        var prefix = Data("SMFTEST".utf8)
+        if prefix.count < targetOffset {
+            prefix.append(Data(repeating: 0x00, count: targetOffset - prefix.count))
+        }
+        return prefix + makeCalsRasterSample()
+    }
+
+    private func paddedCalsRecords(from lines: [String]) -> [[UInt8]] {
+        var records = lines
+        while records.count < 16 {
+            records.append("")
+        }
+
+        return records.map { line in
+            var bytes = Array(line.utf8)
+            XCTAssertLessThanOrEqual(bytes.count, CalsRasterDocument.recordLength)
+            if bytes.count < CalsRasterDocument.recordLength {
+                bytes.append(contentsOf: repeatElement(0x20, count: CalsRasterDocument.recordLength - bytes.count))
+            }
+            return bytes
+        }
+    }
+
+    private func writeUInt16(_ value: UInt16, into data: inout Data, at offset: Int) {
+        guard offset + 2 <= data.count else { return }
+        data[offset] = UInt8(value & 0x00FF)
+        data[offset + 1] = UInt8((value & 0xFF00) >> 8)
+    }
+
+    private func writeUInt32(_ value: UInt32, into data: inout Data, at offset: Int) {
+        guard offset + 4 <= data.count else { return }
+        data[offset] = UInt8(value & 0x000000FF)
+        data[offset + 1] = UInt8((value & 0x0000FF00) >> 8)
+        data[offset + 2] = UInt8((value & 0x00FF0000) >> 16)
+        data[offset + 3] = UInt8((value & 0xFF000000) >> 24)
+    }
+
     private func makeMockTable() -> Data {
         let fieldCount: UInt16 = 2
         let fieldLengths: [UInt8] = [4, 6]
@@ -566,7 +876,7 @@ final class ParadoxFileReaderTests: XCTestCase {
     }
 
     private func paradoxEncodeDouble(_ value: Double) -> Data {
-        var bitPattern = value.bitPattern
+        let bitPattern = value.bitPattern
         var bytes = withUnsafeBytes(of: bitPattern) { Array($0) }
         bytes.reverse()
         if value >= 0 {
