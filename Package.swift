@@ -21,17 +21,25 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "ParadoxDataKit"
+            name: "ParadoxDataKit",
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency"),
+                .enableUpcomingFeature("ExistentialAny")
+            ]
         ),
         .executableTarget(
             name: "ParadoxDataBrowser",
             dependencies: ["ParadoxDataKit"],
-            resources: [
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
             ]
         ),
         .testTarget(
             name: "ParadoxDataKitTests",
-            dependencies: ["ParadoxDataKit"]
+            dependencies: ["ParadoxDataKit"],
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency")
+            ]
         )
     ]
 )

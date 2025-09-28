@@ -1,168 +1,117 @@
 # ParadoxDataKit
 
-ParadoxDataKit is a Swift package for decoding legacy Borland Paradox data files on macOS.
-It understands the family of Paradox artefacts (tables, queries, memo/blob stores) and
-presents their contents as strongly-typed Swift models. It can be re-used
-in any project that needs to inspect Paradox databases.
+ParadoxDataKit is a Swift package for exploring legacy Borland Paradox data on Apple platforms. It parses tables, queries, index structures, and memo blobs, exposing the results as strongly typed Swift models. A companion macOS app (ParadoxDataBrowser) lets you browse directories of Paradox files and generate SwiftData scaffolding.
 
 ## Features
 
-- Parse Paradox `.DB` tables, including memo/graphic fields stored in matching `.MB` files
-- Inspect Paradox `.QBE` query files and raw binary assets (`.RSL`, `.TV`, etc.)
-- Decode CALS raster images (`.CLF`) and Spicer `.SMF` containers with a one-call TIFF wrapper for previews
-- Surface Paradox index metadata (`.PX`, `.Ynn`) and secondary index data tables (`.Xnn`)
-- Generate SwiftData `@Model` boilerplate with primary-key fields annotated for uniqueness
-- Enumerate header metadata: record size, file type, field definitions, code page, and more
-- Decode records into typed `ParadoxValue` instances and generate formatted strings for UI
-- Convenience hex dump for unsupported binary formats
+- Parse Paradox `.DB` tables (including memo/graphic blobs stored in matching `.MB` files)
+- Load Paradox `.QBE` queries and `.TV` table-view layouts
+- Decode primary index files (`.PX`) and secondary index pairs (`.Xnn` data tables + `.Ynn` B-trees)
+- Extract metadata (record counts, field definitions, code pages, etc.)
+- Generate SwiftData `@Model` skeletons with primary-key fields annotated as unique
+- macOS sample browser with parallel directory scanning and key-field highlighting
 
 ## Requirements
 
-- macOS 13 or newer
-- Swift 6.2 or newer (tested with the Xcode 16 toolchain)
+- Swift 6.2+
+- macOS 13+ (browser target)
 
 ## Installation
 
-Add ParadoxDataKit to your `Package.swift` dependencies:
+Add ParadoxDataKit to your `Package.swift`:
 
 ```swift
 .package(url: "https://github.com/<your-org>/ParadoxDataKit.git", from: "1.0.0")
 ```
 
-Then add the library to your target dependencies:
+Then include the library in your target dependencies:
 
 ```swift
 .target(
-    name: "YourApp",
+    name: "YourTool",
     dependencies: [
         .product(name: "ParadoxDataKit", package: "ParadoxDataKit")
     ]
 )
 ```
 
-ParadoxDataKit also ships an optional sample macOS app target (`ParadoxDataBrowser`) that
-you can reference while developing to explore directories of Paradox files.
-
-## Usage
+## Usage Example
 
 ```swift
 import ParadoxDataKit
 
-let fileURL = URL(fileURLWithPath: "path/to/Custmast.DB")
-let parsedFile = try ParadoxFileReader.load(from: fileURL)
+let url = URL(fileURLWithPath: "/path/to/CUSTMAST.DB")
+let file = try ParadoxFileReader.load(from: url)
 
-if case .paradoxTable(let table) = parsedFile.details {
-    print(table.summary)
+if case .paradoxTable(let table) = file.details {
+    print("Fields:\t", table.fields.count)
+    print("Records:\t", table.records.count)
     for record in table.records.prefix(5) {
-        let values = record.formattedValues()
-        print(values.joined(separator: " | "))
+        print(record.formattedValues().joined(separator: " | "))
     }
 }
 ```
 
-### Working with Queries
-
-```swift
-let queryURL = URL(fileURLWithPath: "path/to/report.QBE")
-let query = try ParadoxFileReader.load(from: queryURL)
-if case .paradoxQuery(let qbe) = query.details {
-    print(qbe.text)
-}
-```
-
-## Module Overview
-
-- ``ParadoxFileReader`` – top-level loader that infers file type, exposes metadata, and
-  resolves memo/blob references
-- ``ParadoxFileFormat`` – enum describing known Paradox-related file extensions
-- ``ParadoxTableView`` – exposes header metadata and references from Paradox `.TV` table-view files
-- ``ParadoxFamilyFile`` – parses text manifests listing the related Paradox assets for a table family
-- ``SwiftDataModelRenderer`` – generates SwiftData `@Model` declarations from Paradox table schemas
-- ``CalsRasterDocument`` & ``SpicerSMFDocument`` – parse bitonal CALS pages and SMF wrappers
-- ``ParadoxTable`` – parsed representation of a table including field descriptors and
-  strongly-typed records
-- ``ParadoxRecord`` & ``ParadoxValue`` – decode per-record values with formatters and
-  helper accessors
-- ``ParadoxQuery`` – wraps the text contents of Paradox QBE files
-- ``GenericBinaryFile`` – fallback representation for unsupported binary assets
-
-## Paradox File Types
+## Supported File Types
 
 | Extension | Purpose | Notes |
 |-----------|---------|-------|
-| `.db` | Table data | Companion `.mb` memo/graphic files store overflow text and images. |
-| `.qbe` | Query (Query By Example) definition | Text-based, loaded into `ParadoxQuery`. |
-| `.rsl` | Report layout | Currently exposed as raw binary. |
-| `.fam` | Family manifest | Lists related tables, indexes, memo stores, queries, and views. |
-| `.px` | Primary index | Lookup tree for the leading key in a table. |
-| `.xnn` | Secondary index data tables | Store secondary key + primary key + hint for `.Ynn` trees. |
-| `.ynn` | Secondary index B-tree | Parsed like `.PX`; points into matching `.Xnn` tables. |
-| `.tv` | Table view layout | Stores Paradox UI preferences (column order, widths, captions). |
-| `.clf` / `.cal` / `.cals` | CALS raster image | Rendered through `CalsRasterDocument`. |
-| `.smf` | Spicer SMF container | Wraps CALS rasters; parsed by `SpicerSMFDocument`. |
-| other | Unknown binary asset | Delivered via `GenericBinaryFile`. |
+| `.db` | Table data | Companion `.mb` files store memo/graphic blobs. |
+| `.mb` | Memo/blob store | Loaded automatically when tables reference it. |
+| `.px` | Primary index B-tree | Parsed into block summaries and sample keys. |
+| `.xnn` | Secondary index data table | Contains secondary key + primary key + hint columns. |
+| `.ynn` | Secondary index B-tree | Parsed the same way as `.px`. |
+| `.qbe` | Query definition | Text displayed in the browser. |
+| `.tv` | Table view layout | Header metadata and string references extracted. |
+| `.fam` | Family manifest | Lists related tables/indexes. |
+| other | Raw binary | Exposed as `GenericBinaryFile` for inspection. |
 
-### About `.tv` files
+## SwiftData Model Generation
 
-Paradox creates a `.tv` file the first time you customize how a table should appear in the Windows UI.
-These binaries:
-
-- start with the `"Borland Standard File"` signature, followed by a short header containing version,
-  flags, and offsets.
-- embed null-terminated Windows-1252 strings for the directory hint, table filename, and up to four
-  additional labels. `ParadoxTableView` surfaces these strings and keeps the remaining payload available
-  as a `GenericBinaryFile` for further inspection.
-- contain no data rows—only presentation metadata. If the file is missing, Paradox falls back to default
-  column sizing and order when the table opens.
-
-The binary layout beyond the exposed header is still undocumented by Borland/Corel. Contributions that
-decode additional structures (field descriptors, control blocks, triggers) are very welcome.
-
-## Generating SwiftData models
-
-If you need to migrate Paradox tables into a modern SwiftData stack, use
-``SwiftDataModelRenderer`` to emit starter `@Model` classes. The renderer walks the
-``ParadoxTable`` schema, maps field types onto Swift primitives, and returns a Swift
-source file you can paste into your project:
+`SwiftDataModelRenderer` converts a `ParadoxTable` into a SwiftData `@Model` class:
 
 ```swift
 let file = try ParadoxFileReader.load(from: tableURL)
 if case .paradoxTable(let table) = file.details {
-    let swiftDataSource = SwiftDataModelRenderer.renderModel(for: table, modelName: "Customer")
-    print(swiftDataSource)
+    let source = SwiftDataModelRenderer.renderModel(for: table, fallbackFileName: tableURL.lastPathComponent)
+    print(source)
 }
 ```
 
-Key fields are annotated with `@Attribute(.unique)` so you can spot the primary key.
-Other properties default to optionals because Paradox tables expose no nullability
-metadata. Review the output, adjust types, and add relationships that make sense for
-your domain before compiling.
+Generated models:
+- Use the declared table name, or the file name when the table name is missing
+- Annotate Paradox primary-key fields with `@Attribute(.unique)`
+- Leave other properties optional because Paradox headers do not expose nullability
 
 ## ParadoxDataBrowser Highlights
 
-The sample macOS app (`ParadoxDataBrowser`) is convenient when reverse engineering
-legacy directories:
+The sample macOS app offers:
 
-- Directory scanning runs in parallel so even large datasets enumerate quickly.
-- Primary key columns are highlighted in sample-record grids, and key fields are
-  flagged in the schema list.
-- Secondary index data files (`.Xnn`) show secondary-key, primary-key, and hint
-  columns alongside the underlying rows.
-- Index trees (`.PX`, `.Ynn`) list block metadata so you can inspect the B-tree
-  structure without leaving the app.
-- Each table view provides a “Generate SwiftData Model” button that immediately emits
-  Swift code using the file name when the Paradox header lacks a table name.
+- Parallel directory scanning using Swift concurrency
+- Schema and grid highlighting for primary-key columns
+- Detail panes for `.PX` / `.Ynn` index structures and `.Xnn` data tables
+- One-click SwiftData model generation from any table
+- Copy/export actions for queries, manifests, and raw binaries
+
+## Building & Testing
+
+SwiftPM normally writes module caches under `~/Library`, which may be blocked in restricted environments. Use the helper scripts to keep caches inside the repository:
+
+```bash
+./Scripts/build.sh   # swift build with local module cache
+./Scripts/test.sh    # swift test with local module cache
+```
+
+Both scripts create `.swiftpm/modulecache/` (if needed) and forward any additional arguments to the underlying `swift` command.
 
 ## Further Reading
 
-- [teverett/paradoxReader](https://github.com/teverett/paradoxReader) – Java-based tooling and reference notes for Paradox file structures (DB, PX, MB, Xnn/Ynn). Helpful when cross-checking the binary layouts surfaced by ParadoxDataKit.
+- [teverett/paradoxReader](https://github.com/teverett/paradoxReader) – Community documentation of Paradox file formats
 
 ## Contributing
 
-Bug reports and pull requests are welcome! Please include sample Paradox files (with any
-sensitive data removed) when filing parsing issues so we can reproduce and add regression
-tests.
+Bug reports and pull requests are welcome. When filing issues, please include sample Paradox files (with sensitive data removed) so we can reproduce and add regression tests.
 
 ## License
 
-ParadoxDataKit is released under the MIT license. See [LICENSE](LICENSE) for details.
+ParadoxDataKit is released under the MIT License. See [LICENSE](LICENSE) for details.

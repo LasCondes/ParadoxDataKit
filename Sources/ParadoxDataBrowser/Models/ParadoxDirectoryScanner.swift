@@ -12,12 +12,12 @@ struct ParadoxDirectoryScanner {
         while let next = enumerator.nextObject() as? URL {
             fileURLs.append(next)
         }
-        let batches = fileURLs.chunked(into: 32)
 
         let grouped = await withTaskGroup(of: [ParadoxBrowserCategory: [ParadoxScannedFile]].self) { group in
-            for batch in batches {
+            for batch in fileURLs.chunked(into: 32) {
                 group.addTask {
-                    var localGroups: [ParadoxBrowserCategory: [ParadoxScannedFile]] = [:]
+                    var local: [ParadoxBrowserCategory: [ParadoxScannedFile]] = [:]
+
                     for fileURL in batch {
                         do {
                             let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -28,7 +28,6 @@ struct ParadoxDirectoryScanner {
 
                             let loadedFile: ParadoxFile?
                             let errorMessage: String?
-
                             do {
                                 loadedFile = try ParadoxFileReader.load(from: fileURL)
                                 errorMessage = nil
@@ -44,13 +43,15 @@ struct ParadoxDirectoryScanner {
                                 loadedFile: loadedFile,
                                 errorMessage: errorMessage
                             )
+
                             let category = ParadoxBrowserCategory.category(for: format, fileName: entry.name)
-                            localGroups[category, default: []].append(entry)
+                            local[category, default: []].append(entry)
                         } catch {
                             continue
                         }
                     }
-                    return localGroups
+
+                    return local
                 }
             }
 
@@ -134,8 +135,6 @@ struct ParadoxScannedFile: Identifiable, Equatable {
     }
 }
 
-extension ParadoxScannedFile: @unchecked Sendable {}
-
 enum ScannerError: Error, LocalizedError {
     case unableToEnumerate(String)
 
@@ -161,3 +160,5 @@ private extension Array {
         return result
     }
 }
+
+extension ParadoxScannedFile: @unchecked Sendable {}
