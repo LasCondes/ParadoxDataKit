@@ -5,6 +5,7 @@ ParadoxDataKit is a Swift package for exploring legacy Borland Paradox data on A
 ## Features
 
 - Parse Paradox `.DB` tables (including memo/graphic blobs stored in matching `.MB` files)
+- Decode individual rows into strongly typed Swift `Decodable` models with `ParadoxDecoder`
 - Load Paradox `.QBE` queries and `.TV` table-view layouts
 - Decode primary index files (`.PX`) and secondary index pairs (`.Xnn` data tables + `.Ynn` B-trees)
 - Extract metadata (record counts, field definitions, code pages, etc.)
@@ -65,6 +66,52 @@ if case .paradoxTable(let table) = file.details {
 | `.tv` | Table view layout | Header metadata and string references extracted. |
 | `.fam` | Family manifest | Lists related tables/indexes. |
 | other | Raw binary | Exposed as `GenericBinaryFile` for inspection. |
+
+## Decoding Records with `Decodable`
+
+`ParadoxDecoder` turns a `ParadoxRecord` into any Swift `Decodable` type. Provide a `CodingKeys` enum that conforms to `ParadoxCodingKey` (and optionally `CaseIterable` for convenience helpers) and map each case to the canonical Paradox column name:
+
+```swift
+struct CustmastRow: Decodable {
+    let customerId: Double
+    let name: String?
+    let status: String?
+
+    private enum CodingKeys: String, CodingKey, ParadoxCodingKey, CaseIterable {
+        case customerId = "CUSTOMERID"
+        case name = "CUSTOMERNAME"
+        case status = "STATUSCODE"
+    }
+}
+
+let rows: [CustmastRow] = table.records.compactMap { record in
+    try? ParadoxDecoder.decode(CustmastRow.self, from: record)
+}
+```
+
+If a column appears under multiple aliases across databases, override `aliases` for that key:
+
+```swift
+private enum CodingKeys: String, CodingKey, ParadoxCodingKey, CaseIterable {
+    case customerId = "CUSTOMERID"
+    var aliases: [String] { ["CUSTOMERID", "CUSTID", "CUSTOMERNUMBER"] }
+}
+```
+
+The helper extension `ParadoxCodingKey+FieldNames` (used in the sample app) illustrates how to gather all normalized aliases via `FieldSnapshot.normalizeKey`.
+
+## Working with `FieldSnapshot`
+
+For ad-hoc inspection you can build a `FieldSnapshot` directly. It normalises field names and converts `ParadoxValue` payloads into idiomatic Swift types:
+
+```swift
+let snapshot = FieldSnapshot(record: record)
+let customerId = snapshot.identifier(for: ["CUSTOMERID"])
+let createdOn = snapshot.date(for: ["DATEOFFIRSTCONTACT"])
+let addressLines = snapshot.addressLines()
+```
+
+Utility methods such as `FieldSnapshot.trimmedOrNil(_:)` are public, so you can reuse the same whitespace handling outside of the decoder.
 
 ## SwiftData Model Generation
 
